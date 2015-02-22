@@ -1,0 +1,225 @@
+---
+title: "Impact of weather on economy and public health in U.S.A between 1950 and 2011"
+author: "Josip Jureta"
+date: "Sunday, February 22, 2015"
+output: html_document
+---
+
+```{r global, echo = FALSE, results = "hide", message = FALSE }
+library(data.table)
+library(ggplot2)
+library(lubridate)
+library(dplyr)
+```
+
+## Synopsis
+
+In this analysis we try to answer two questions: which kind of weather events are most harmful with respect to population health and which one have the greatest economical impact. 
+For this analysis the NOAA Storm Database is used (see http://www.ncdc.noaa.gov/stormevents/). The data file is provided by coursera.
+
+## Data Processing
+
+Data are downloaded from coursera and loaded into data.table. The function fread which is more optimized to load huge data set was not used because the issue with double quoted strings in the reference field. Instead data are loaded using read.csv and afterword transformed to data.table.
+
+The definition of fields, or code book, can be found on this site http://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf. 
+
+One of problem was with the format of  BGN_DATE field which was not in standard Y-m-d format, but   in m/d/Y. In order to load it as Date object I applied solution described here: http://stackoverflow.com/questions/13022299/specify-date-format-for-colclasses-argument-in-read-table-read-csv/13022441#13022441.
+
+Data are downloaded and loaded by this script:
+
+```{r load_data, results = "hide", cache=TRUE, message = FALSE }
+## handler for specific date format
+setAs("character","myDate", 
+      function(from) as.Date(from, format="%m/%d/%Y %H:%M:%S") )
+
+fileURL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+filePath <- "./data/repdata_data_StormData.csv.bz2"
+## download file
+download.file(fileURL, destfile = filePath, mode="wb", method="curl")
+downloaddate <- date()
+
+## data are loaded with read.csv and not fread because fread is not able to cope with som
+## double quoted strings
+data <- data.table(read.csv(bzfile(filePath), 
+                            colClasses=c('numeric','myDate', rep(NA, 35))
+                            )
+                   )
+
+## keep only data important for analysis
+data <- data[, c('EVTYPE','FATALITIES', 'INJURIES', 
+         'PROPDMG', 'PROPDMGEXP', 'CROPDMG', 'CROPDMGEXP', 'BGN_DATE'), with = FALSE]
+```
+
+In provided database, the event type code is not respected (for valid event types see http://www.ncdc.noaa.gov/stormevents/pd01016005curr.pdf, paragraph 2.1.1). See number of event types (it should be 48):
+```{r}
+length(unique(data$EVTYPE))
+```
+
+In order to fix issues with EVTYPE (i.e. event types), first I transfer it to upper case and second, I try to much them with specified events.
+
+```{r dependson='load_data', results = "hide"}
+data[,EVTYPE := toupper(EVTYPE)]
+
+data[EVTYPE %like% '^THUND', EVTYPE := 'THUNDERSTORM WIND']
+data[EVTYPE %like% '^TSTM', EVTYPE := 'THUNDERSTORM WIND']
+data[EVTYPE %like% '^TORN', EVTYPE := 'TORNADO']
+data[EVTYPE %like% '^HURRICANE', EVTYPE := 'HURRICANE (TYPHOON)']
+data[EVTYPE %like% '^HIGH WIND', EVTYPE := 'HIGH WIND']
+data[EVTYPE == 'STRONG WINDS', EVTYPE := 'STRONG WIND']
+data[EVTYPE %like% '^HAIL', EVTYPE := 'HAIL']
+data[EVTYPE %like% '^MARINE TSTM WIND', EVTYPE := 'MARINE THUNDERSTORM WIND']
+data[EVTYPE %like% '^HEAVY RAIN', EVTYPE := 'HEAVY RAIN']
+data[EVTYPE %like% '^HEAVY SNOW', EVTYPE := 'HEAVY SNOW']
+data[EVTYPE %like% '^FLASH FLOOD', EVTYPE := 'FLASH FLOOD']
+data[EVTYPE %like% '^URBAN/SML STREAM FLD', EVTYPE := 'FLOOD']
+data[EVTYPE %like% '^URBAN/SMALL STREAM FLOODING', EVTYPE := 'FLOOD']
+data[EVTYPE %like% '^URBAN/SMALL STREAM  FLOOD', EVTYPE := 'FLOOD']
+data[EVTYPE %like% '^URBAN FLOODS', EVTYPE := 'FLOOD']
+data[EVTYPE %like% '^URBAN FLOODING', EVTYPE := 'FLOOD']
+data[EVTYPE %like% '^URBAN FLOOD', EVTYPE := 'FLOOD']
+data[EVTYPE %like% '^HIGHWAY FLOODING', EVTYPE := 'FLOOD']
+data[EVTYPE %like% '^BLIZZARD', EVTYPE := 'BLIZZARD']
+data[EVTYPE %like% '^VOLCANIC', EVTYPE := 'VOLCANIC ASH']
+data[EVTYPE %like% '^WINTER WEATHER', EVTYPE := 'WINTER WEATHER']
+data[EVTYPE %like% '^WINTER STORM', EVTYPE := 'WINTER STORM']
+data[EVTYPE %like% '^EXTREME COLD', EVTYPE := 'EXTREME COLD/WIND CHILL']
+data[EVTYPE %like% '^EXTREME HEAT', EVTYPE := 'EXCESSIVE HEAT']
+data[EVTYPE %like% '^HEAT WAVE', EVTYPE := 'EXCESSIVE HEAT']
+data[EVTYPE %like% '^RECORD HEAT', EVTYPE := 'EXCESSIVE HEAT']
+data[EVTYPE %like% '^FOG', EVTYPE := 'DENSE FOG']
+data[EVTYPE %like% '^WILD FIRES', EVTYPE := 'WILDFIRE']
+data[EVTYPE %like% '^WILD/FOREST FIRE', EVTYPE := 'WILDFIRE']
+data[EVTYPE %like% '^GLAZE', EVTYPE := 'WINTER WEATHER']
+data[EVTYPE %like% '^BLACK ICE', EVTYPE := 'WINTER WEATHER']
+data[EVTYPE %like% '^WATERSPOUT', EVTYPE := 'WATERSPOUT']
+data[EVTYPE %like% '^COASTAL', EVTYPE := 'COASTAL FLOOD']
+data[EVTYPE %like% '^FREEZING', EVTYPE := 'FROST/FREEZE']
+data[EVTYPE %like% '^HEAVY SURF', EVTYPE := 'HIGH SURF']
+data[EVTYPE == 'COLD', EVTYPE := 'COLD/WIND CHILL']
+data[EVTYPE == 'EXTREME WINDCHILL', EVTYPE := 'COLD/WIND CHILL']
+data[EVTYPE %in% c('ICE', 'ICE ROADS', 'ICE STORM/FLASH FLOOD', 'ICY ROADS'), 
+     EVTYPE := 'HIGH SURF']
+data[EVTYPE == 'RIP CURRENTS', EVTYPE := 'RIP CURRENT']
+data[EVTYPE == 'SMALL HAIL', EVTYPE := 'HAIL']
+data[EVTYPE == 'HIGH SURF ADVISORY', EVTYPE := 'HIGH SURF']
+```
+
+But still a lot of event types are not mapped to correct event type:
+```{r}
+length(unique(data$EVTYPE))
+```
+
+In order to measure the impact of those not mapped types, I mapped known types in the column EVTYPEVALID as a boolean TRUE and those not known are kept as NA. 
+
+```{r results = "hide"}
+eventtypes <- fread("data/eventtypes.csv")
+eventtypes[,EVTYPE := toupper(EVTYPE)]
+eventtypes[,EVTYPEVALID := TRUE]
+
+data <- merge(data, eventtypes, by = "EVTYPE", all.x = T)
+```
+
+Also, the values of PROPDMGEXP and CROPDMGEXP doesn't respect data validity. In order to fix this issue, I firstly set all  PROPDMGEXP to 0 if PROPDMG is 0. the same thing is done for  CROPDMGEXP. Also the  PROPDMGEXP and CROPDMGEXP are interpreted as the exponent of this and in order to do so new fields PROPDMGTOTAL and CROPDMGTOTAL are created. If  PROPDMGEXP or  CROPDMGEXP are unknown than  PROPDMGTOTAL and  CROPDMGTOTAL kept as NA consequently.
+
+In order to make the economical impact analysis new data table object is created and in this new table new fild is added as DMGTOTAL = PROPDMGTOTA + CROPDMGTOTAL, where PROPDMGTOTA = PROPDMG * 10^PROPDMGEXP and CROPDMGTOTA = CROPDMG * 10^CROPDMGEXP.
+
+In this analysis I choos to exclude exponents: -,+ and '' because it is not clear what thay represents.
+
+```{r results = "hide"}
+data[PROPDMG == 0, PROPDMGEXP := '0']
+data[CROPDMG == 0, CROPDMGEXP := '0']
+
+economic_damage <- data[, c('EVTYPE', 'PROPDMG', 'PROPDMGEXP', 'CROPDMG', 
+                            'CROPDMGEXP', 'EVTYPEVALID', 'BGN_DATE'), 
+                        with = FALSE]
+
+## I choose to remove all empty, -, ? and + exponents.
+## transform textual exponents into numbers
+economic_damage[PROPDMGEXP == 'B', PROPDMGTOTAL := PROPDMG * 1E9]
+economic_damage[PROPDMGEXP == 'h', PROPDMGTOTAL := PROPDMG * 1E2]
+economic_damage[PROPDMGEXP == 'H', PROPDMGTOTAL := PROPDMG * 1E2]
+economic_damage[PROPDMGEXP == 'K', PROPDMGTOTAL := PROPDMG * 1E3]
+economic_damage[PROPDMGEXP == 'k', PROPDMGTOTAL := PROPDMG * 1E3]
+economic_damage[PROPDMGEXP == 'M', PROPDMGTOTAL := PROPDMG * 1E6]
+economic_damage[PROPDMGEXP == 'm', PROPDMGTOTAL := PROPDMG * 1E6]
+
+economic_damage[PROPDMGEXP %in% c('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), 
+                PROPDMGTOTAL := PROPDMG * 10^as.numeric(as.character(PROPDMGEXP))]
+
+economic_damage[CROPDMGEXP == 'B', CROPDMGTOTAL := CROPDMG * 1E9]
+economic_damage[CROPDMGEXP == 'h', CROPDMGTOTAL := CROPDMG * 1E2]
+economic_damage[CROPDMGEXP == 'H', CROPDMGTOTAL := CROPDMG * 1E2]
+economic_damage[CROPDMGEXP == 'K', CROPDMGTOTAL := CROPDMG * 1E3]
+economic_damage[CROPDMGEXP == 'k', CROPDMGTOTAL := CROPDMG * 1E3]
+economic_damage[CROPDMGEXP == 'M', CROPDMGTOTAL := CROPDMG * 1E6]
+economic_damage[CROPDMGEXP == 'm', CROPDMGTOTAL := CROPDMG * 1E6]
+
+economic_damage[CROPDMGEXP %in% c('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'), 
+                CROPDMGTOTAL := CROPDMG * 10^as.numeric(as.character(CROPDMGEXP))]
+
+## those ecluded because wrong exponent is specified set to 0
+economic_damage[is.na(PROPDMGTOTAL), PROPDMGTOTAL := 0]
+economic_damage[is.na(CROPDMGTOTAL), CROPDMGTOTAL := 0]
+
+economic_damage[, DMGTOTAL := PROPDMGTOTAL + CROPDMGTOTAL]
+
+economic_damage[, YEAR := year(BGN_DATE)]
+```
+
+Because the inflation was not taken into account, in order to evaluate damage, the dollars have to be expressed in current value. The solution to do so is done here: http://stackoverflow.com/questions/12590180/inflation-adjusted-prices-package.
+
+```{r load_inflation_data, cache=TRUE}
+monthly_cpi <-
+  read.csv("http://research.stlouisfed.org/fred2/data/CPIAUCSL.csv", header = TRUE)
+monthly_cpi$YEAR <- year(monthly_cpi$DATE)
+yearly_cpi <- monthly_cpi %>% group_by(YEAR) %>% summarize(cpi = mean(VALUE))
+yearly_cpi$adj_factor <- yearly_cpi$cpi/yearly_cpi$cpi[yearly_cpi$YEAR == 2014]
+yearly_cpi <- data.table(yearly_cpi)
+```
+
+Calculate the damage by event type.
+```{r dependson='load_inflation_data'}
+economic_damage <- merge(economic_damage, yearly_cpi, by = "YEAR", all.x = T)
+
+economic_damage <- economic_damage[, c('EVTYPE', 'YEAR', 'EVTYPEVALID', 'DMGTOTAL', 'adj_factor'), 
+                        with = FALSE]
+
+## adjust the damage to current dollars
+economic_damage[, DMGTOTAL := DMGTOTAL / adj_factor]
+
+damage <- economic_damage[, .(TOTAL = sum(DMGTOTAL, na.rm = T)), by=EVTYPE]
+most_expensive <- which.max(damage$TOTAL)
+most_expensive_eventtype <- damage$EVENTYPE[most_expensive]
+most_expensive_amount <- damage$TOTAL[most_expensive]
+
+not_mapped_eventtypes <- economic_damage[is.na(EVTYPEVALID), .(TOTAL = sum(DMGTOTAL, na.rm = T))]
+not_mapped_eventtypes_amount <- not_mapped_eventtypes$TOTAL[1]
+```
+
+In order to validate impact of non mapped event types I compared most expensive event with total damage of non mapped even types. The result is that non mapped event types represents only `r not_mapped_eventtypes_amount/most_expensive_amount * 100`%; therefore it is safe to exclude them.
+
+In order to evaluate the weather impact on public health, I evaluated to outcome: fatal and injuries.
+
+```{r dependson='load_data'}
+fatalities <- data[, .(TOTAL = sum(FATALITIES, na.rm = T)), by=EVTYPE]
+most_fatal <- which.max(fatalities$TOTAL)
+most_fatal_event <- fatalities$EVTYPE[most_fatal]
+most_fatal_count <- fatalities$TOTAL[most_fatal]
+
+injuries <- data[, .(TOTAL = sum(INJURIES, na.rm = T)), by=EVTYPE]
+most_injuries <- which.max(injuries$TOTAL)
+most_injuries_event <- injuries$EVTYPE[most_injuries]
+most_injuries_count <- injuries$TOTAL[most_injuries]
+```
+
+## Result
+
+### Impact on population health
+
+Two different outcomes are analyzed: fatal and injuries. The deadliest even type is `r most_fatal_event` with `r most_fatal_count` deaths.
+
+The event type with most of injuries is `r most_injuries_event` with `r most_injuries_count` injuries.
+
+### Impact on economy
+
+The most expensive event type is `r most_expensive_eventtype` with total cost of `r most_expensive_amount / 10^9` B$.
